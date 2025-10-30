@@ -1,4 +1,5 @@
 .idea/
 .venv/
 .env
+test_suggestions.db
 suggestions.db
