@@ -321,14 +321,27 @@ class SuggestionModal(discord.ui.Modal, title='Submit a Suggestion'):
         )
 
         await interaction.response.send_message(
-            f'✅ Suggestion submitted! ID: `{suggestion_id}`', ephemeral=True)
+            '✅ Suggestion submitted!', ephemeral=True)
 
 
 # Persistent view for voting
+# replace SuggestionView with this dynamic-button version
 class SuggestionView(discord.ui.View):
     def __init__(self, suggestion_id):
         super().__init__(timeout=None)
         self.suggestion_id = suggestion_id
+
+        # dynamic, per-suggestion custom_ids so persistence can map interactions
+        up_btn = discord.ui.Button(emoji='✅', style=discord.ButtonStyle.grey,
+                                   custom_id=f'upvote:{suggestion_id}')
+        down_btn = discord.ui.Button(emoji='❌', style=discord.ButtonStyle.grey,
+                                     custom_id=f'downvote:{suggestion_id}')
+
+        up_btn.callback = self._handle_upvote
+        down_btn.callback = self._handle_downvote
+
+        self.add_item(up_btn)
+        self.add_item(down_btn)
 
     async def update_embed(self, interaction: discord.Interaction):
         suggestion = get_suggestion(self.suggestion_id)
@@ -339,15 +352,16 @@ class SuggestionView(discord.ui.View):
 
         embed = interaction.message.embeds[0]
 
-        # Update votes field
         for i, field in enumerate(embed.fields):
             if field.name == 'Results so far:':
-                embed.set_field_at(i, name='Results so far:',
-                                   value=f'Upvotes: {votes["upvote"]} ✅\nDownvotes: {votes["downvote"]} ❌',
-                                   inline=False)
+                embed.set_field_at(
+                    i,
+                    name='Results so far:',
+                    value=f'Upvotes: {votes["upvote"]} ✅\nDownvotes: {votes["downvote"]} ❌',
+                    inline=False
+                )
                 break
 
-        # Update color based on status
         status = suggestion[9]
         if status == 'approved':
             embed.color = discord.Color.green()
@@ -356,67 +370,64 @@ class SuggestionView(discord.ui.View):
 
         await interaction.message.edit(embed=embed)
 
-    @discord.ui.button(emoji='✅', style=discord.ButtonStyle.grey,
-                       custom_id='upvote')
-    async def upvote_button(self, interaction: discord.Interaction,
-                            button: discord.ui.Button):
+    async def _handle_upvote(self, interaction: discord.Interaction):
+        # same logic as before but using self.suggestion_id
         suggestion = get_suggestion(self.suggestion_id)
         if not suggestion or suggestion[9] != 'pending':
-            await interaction.response.send_message(
-                '❌ Voting is closed for this suggestion.', ephemeral=True)
+            await interaction.response.send_message('❌ Voting is closed for this suggestion.', ephemeral=True)
             return
 
         current_vote = get_user_vote(self.suggestion_id, interaction.user.id)
-
         if current_vote == 'upvote':
             remove_vote(self.suggestion_id, interaction.user.id)
-            await interaction.response.send_message('🔄 Upvote removed.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('🔄 Upvote removed.', ephemeral=True)
         elif current_vote == 'downvote':
             remove_vote(self.suggestion_id, interaction.user.id)
             add_vote(self.suggestion_id, interaction.user.id, 'upvote')
-            await interaction.response.send_message('✅ Changed to upvote.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('✅ Changed to upvote.', ephemeral=True)
         else:
             add_vote(self.suggestion_id, interaction.user.id, 'upvote')
-            await interaction.response.send_message('✅ Upvoted!',
-                                                    ephemeral=True)
+            await interaction.response.send_message('✅ Upvoted!', ephemeral=True)
 
         await self.update_embed(interaction)
 
-    @discord.ui.button(emoji='❌', style=discord.ButtonStyle.grey,
-                       custom_id='downvote')
-    async def downvote_button(self, interaction: discord.Interaction,
-                              button: discord.ui.Button):
+    async def _handle_downvote(self, interaction: discord.Interaction):
         suggestion = get_suggestion(self.suggestion_id)
         if not suggestion or suggestion[9] != 'pending':
-            await interaction.response.send_message(
-                '❌ Voting is closed for this suggestion.', ephemeral=True)
+            await interaction.response.send_message('❌ Voting is closed for this suggestion.', ephemeral=True)
             return
 
         current_vote = get_user_vote(self.suggestion_id, interaction.user.id)
-
         if current_vote == 'downvote':
             remove_vote(self.suggestion_id, interaction.user.id)
-            await interaction.response.send_message('🔄 Downvote removed.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('🔄 Downvote removed.', ephemeral=True)
         elif current_vote == 'upvote':
             remove_vote(self.suggestion_id, interaction.user.id)
             add_vote(self.suggestion_id, interaction.user.id, 'downvote')
-            await interaction.response.send_message('❌ Changed to downvote.',
-                                                    ephemeral=True)
+            await interaction.response.send_message('❌ Changed to downvote.', ephemeral=True)
         else:
             add_vote(self.suggestion_id, interaction.user.id, 'downvote')
-            await interaction.response.send_message('❌ Downvoted!',
-                                                    ephemeral=True)
+            await interaction.response.send_message('❌ Downvoted!', ephemeral=True)
 
         await self.update_embed(interaction)
 
 
+# update on_ready to re-register pending suggestion views
 @bot.event
 async def on_ready():
-    # Re-register persistent views
-    bot.add_view(SuggestionView(suggestion_id=''))
+    # register a view per pending suggestion so persistent custom_ids map correctly
+    conn = sqlite3.connect('suggestions.db')
+    c = conn.cursor()
+    c.execute("SELECT suggestion_id FROM suggestions WHERE status = 'pending'")
+    rows = c.fetchall()
+    conn.close()
+
+    for (suggestion_id,) in rows:
+        try:
+            bot.add_view(SuggestionView(suggestion_id))
+        except Exception:
+            # safe fallback, keep going
+            pass
 
     try:
         synced = await bot.tree.sync()
@@ -424,6 +435,7 @@ async def on_ready():
         print(f'Synced {len(synced)} command(s)')
     except Exception as e:
         print(f'Error syncing commands: {e}')
+
 
 
 # Commands
