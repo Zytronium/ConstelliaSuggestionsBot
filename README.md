@@ -37,6 +37,7 @@ rejected, the thread is locked.
 
 ## Known Bugs
 - Approving/rejecting suggestions inside their own thread causes the interaction to fail because the thread archives, though the suggestion is successfully approved/rejected.
+- Attempting to change/add votes on an approved/rejected suggestion fails if the bot has rebooted since the suggestion was approved/rejected instead of telling the user they can't vote on it. 
 
 **Suggestions Channel Bot Permissions Required** if denied to @everyone:
 - Send Messages
